@@ -1,0 +1,7 @@
+# generated docs
+doc/api
+
+# # local dev & temp files
+.dart_tool/
+_*.md
+pubspec.lock
