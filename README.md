@@ -63,7 +63,7 @@ import 'package:vox_rw/vox_rw.dart';
 > see `example/print.dart`
 > ```console
 > dart run example/print.dart <file>
-> dart run example/print.dart example/samples/cube3_project.vox
+> dart run example/print.dart example/samples/cube3_save.vox
 > ```
 
 ```dart
