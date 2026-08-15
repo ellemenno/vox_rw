@@ -35,10 +35,10 @@ void main() {
         }
       }
 
-      print('materials parsed: ${_asThousands(voxFile.materials.length)}');
-      print('layers parsed: ${_asThousands(voxFile.layers.length)}');
-      print('cameras parsed: ${_asThousands(voxFile.cameras.length)}');
-      print('scene graph nodes parsed: ${_asThousands(voxFile.nodes.length)}');
+      print('${_asThousands(voxFile.materials.length)} materials');
+      print('${_asThousands(voxFile.layers.length)} layers');
+      print('${_asThousands(voxFile.cameras.length)} cameras');
+      print('${_asThousands(voxFile.nodes.length)} scene graph nodes');
       if (voxFile.nodes.isNotEmpty) {
         _printSceneNode(voxFile.rootNode, voxFile.nodes);
       }
