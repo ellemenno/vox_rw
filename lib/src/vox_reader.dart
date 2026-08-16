@@ -13,7 +13,13 @@ class VoxReader {
   final Uint8List _bytes;
   int _offset = 0;
 
-  /// construct from a list of integer bytes, e.g. [Uint8List], or [int]
+  static Never oob(int start, int stepSize, int end) {
+    throw RangeError('Read out of bounds: from=${start}, length=${stepSize}, limit=${end}');
+  }
+
+  /// construct from a list of integer bytes, e.g. [Uint8List], or [int].
+  ///
+  /// internal representation uses [Uint8List] for performance.
   VoxReader(List<int> bytes) : _bytes = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
 
   /// construct from a [ByteData] instance
@@ -29,57 +35,53 @@ class VoxReader {
   int get length => _bytes.length;
 
   /// `true` when more bytes are available to read from [offset].
-  bool get hasMore => _offset < _bytes.length;
+  bool get hasMore => (_offset < _bytes.length);
 
   /// read a byte as an unsigned 8-bit integer (`uint8`), value range of 0 to 255.
   ///
   /// dart doesn't have an instantiable `uint8` data type; result is given as [int], similar to [Uint8List] behavior.
   /// throws [RangeError] if there are not enough bytes from [offset] to [length] for reading this type
   int readUint8() {
-    if (_offset + 1 > _bytes.length) {
-      throw RangeError('Read out of bounds: offset=$_offset, length=1, total=${_bytes.length}');
-    }
+    final int stepSize = 1;
+    if ((_offset + stepSize) > _bytes.length) oob(_offset, stepSize, _bytes.length);
+    // read little-endian 8-bit integer
     final int value = _bytes[_offset];
-    _offset += 1;
+    _offset += stepSize;
     return value;
   }
 
-  /// read 4 bytes as a signed little-endian 32-bit integer ([int]), value range of -2,147,483,648 to 2,147,483,647.
+  /// read 4 bytes as a signed little-endian 32-bit integer ([int]), value range of `-2,147,483,648` to `2,147,483,647`.
   ///
   /// throws [RangeError] if there are not enough bytes from [offset] to [length] for reading this type
   int readInt32() {
-    if (_offset + 4 > _bytes.length) {
-      throw RangeError('Read out of bounds: offset=$_offset, length=4, total=${_bytes.length}');
-    }
+    final int stepSize = 4;
+    if ((_offset + stepSize) > _bytes.length) oob(_offset, stepSize, _bytes.length);
     // read little-endian 32-bit integer
-    final ByteData byteData = ByteData.sublistView(_bytes, _offset, _offset + 4);
+    final ByteData byteData = ByteData.sublistView(_bytes, _offset, _offset + stepSize);
     final int value = byteData.getInt32(0, Endian.little);
-    _offset += 4;
+    _offset += stepSize;
     return value;
   }
 
-  /// read 4 bytes as a signed little-endian 32-bit float ([double]).
+  /// read 4 bytes as a signed little-endian IEEE 754 32-bit float ([double]), value range of ± `1.17549435 × 10⁻³⁸` to `3.40282347 × 10³⁸` and `0`.
   ///
   /// throws [RangeError] if there are not enough bytes from [offset] to [length] for reading this type
   double readFloat32() {
-    if (_offset + 4 > _bytes.length) {
-      throw RangeError('Read out of bounds: offset=$_offset, length=4, total=${_bytes.length}');
-    }
+    final int stepSize = 4;
+    if ((_offset + stepSize) > _bytes.length) oob(_offset, stepSize, _bytes.length);
     // read little-endian 32-bit float
-    final ByteData byteData = ByteData.sublistView(_bytes, _offset, _offset + 4);
+    final ByteData byteData = ByteData.sublistView(_bytes, _offset, _offset + stepSize);
     final double value = byteData.getFloat32(0, Endian.little);
-    _offset += 4;
+    _offset += stepSize;
     return value;
   }
 
   /// read [length] bytes into a [Uint8List].
   ///
   /// throws [RangeError] if there are not enough bytes from [offset] to [length] for reading this type
-  List<int> readBytes(int length) {
-    if (_offset + length > _bytes.length) {
-      throw RangeError(
-          'Read out of bounds: offset=$_offset, length=$length, total=${_bytes.length}');
-    }
+  Uint8List readBytes(int length) {
+    if ((_offset + length) > _bytes.length) oob(_offset, length, _bytes.length);
+    // read bytes
     final Uint8List result = _bytes.sublist(_offset, _offset + length);
     _offset += length;
     return result;
@@ -87,20 +89,19 @@ class VoxReader {
 
   /// read [length] bytes as dart character codes and construct a [String] from them (see [String.fromCharCodes()]).
   ///
-  /// a [RangeError] will be thrown if there are not enough bytes from [offset] to [length] for reading this type
+  /// a [RangeError] will be thrown if there are not enough bytes from [offset] to [length] to read
   String readString(int length) {
-    final List<int> bytes = readBytes(length);
+    final Uint8List bytes = readBytes(length);
     return String.fromCharCodes(bytes);
   }
 
   /// read an `int32` and use its value as the length parameter for [readString()].
   ///
-  /// a [RangeError] will be thrown if there are not enough bytes from [offset] to [length] for reading this type
+  /// a [FormatException] will be thrown if the string length is invalid.
+  /// a [RangeError] will be thrown if there are not enough bytes from [offset] to [length] for reading the string
   String readStringPrefixed() {
     final int len = readInt32();
-    if (len < 0) {
-      throw FormatException('Invalid string length: $len');
-    }
+    if (len < 0) throw FormatException('Invalid string length: $len');
     return readString(len);
   }
 

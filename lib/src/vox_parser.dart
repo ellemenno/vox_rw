@@ -22,6 +22,48 @@ class _VoxSize {
   const _VoxSize(this.x, this.y, this.z);
 }
 
+class _VoxLogger {
+  late final String _hbarSolid;
+  late final String _hbarDashy;
+  late final StringBuffer _logBuffer;
+  bool tracing;
+
+  _VoxLogger({StringBuffer? buffer, this.tracing = true, int barLength = 80}) {
+    _logBuffer = buffer ?? StringBuffer();
+    _hbarSolid = '--' * (barLength ~/ 2);
+    _hbarDashy = '- ' * (barLength ~/ 2);
+  }
+
+  bool get isEmpty => _logBuffer.isEmpty;
+
+  bool get isNotEmpty => _logBuffer.isNotEmpty;
+
+  int get length => _logBuffer.length;
+
+  void clear() {
+    if (tracing) _logBuffer.clear();
+  }
+
+  void add(String s) {
+    if (tracing) _logBuffer.write(s);
+  }
+
+  void line(String s) {
+    if (tracing) _logBuffer.writeln(s);
+  }
+
+  void barS() {
+    if (tracing) _logBuffer.writeln(_hbarSolid);
+  }
+
+  void barD() {
+    if (tracing) _logBuffer.writeln(_hbarDashy);
+  }
+
+  @override
+  String toString() => _logBuffer.toString();
+}
+
 /// utility for parsing MagicaVoxel `.vox` format files.
 ///
 /// VOX files follow a Resource Interchange File Format (RIFF) convention of labeled chunks.
@@ -398,62 +440,49 @@ class _VoxSize {
 /// https://github.com/ephtracy/voxel-model/blob/master/MagicaVoxel-file-format-vox-extension.txt
 class VoxParser {
   static _VoxRawChunk _parseRawChunk(VoxReader reader) {
+    // get chunk id, content bytes count, and child bytes count
     final String id = reader.readString(4);
     final int contentSize = reader.readInt32();
     final int childrenSize = reader.readInt32();
-
-    final List<int> content = reader.readBytes(contentSize);
-
-    final List<int> childrenBytes = reader.readBytes(childrenSize);
-    final VoxReader childrenReader = VoxReader(childrenBytes);
-    final List<_VoxRawChunk> children = <_VoxRawChunk>[];
+    // read content bytes
+    final Uint8List contentBytes = reader.readBytes(contentSize);
+    // extract chunks from child bytes
+    final List<_VoxRawChunk> childChunks = <_VoxRawChunk>[];
+    final VoxReader childrenReader = VoxReader(reader.readBytes(childrenSize));
     while (childrenReader.hasMore) {
-      children.add(_parseRawChunk(childrenReader));
+      childChunks.add(_parseRawChunk(childrenReader));
     }
-
-    // Convert content to Uint8List for efficiency
-    final Uint8List contentUint8 = content is Uint8List ? content : Uint8List.fromList(content);
-
-    return _VoxRawChunk(id, contentUint8, children);
+    return _VoxRawChunk(id, contentBytes, childChunks);
   }
 
   /// parse voxel data from a [File] into a [VoxFile] data structure.
   ///
   /// throws a [FileSystemException] if file read fails.
   static VoxFile parseFile(File file, {StringBuffer? logBuffer}) {
-    if (logBuffer != null) {
-      return parse(file.readAsBytesSync(), logBuffer: logBuffer);
-    }
-    return parse(file.readAsBytesSync());
+    return parse(file.readAsBytesSync(), logBuffer: logBuffer);
   }
 
-  /// parse voxel data from a list of bytes into a [VoxFile] data structure.
+  /// parse voxel data from a list of [bytes] into a [VoxFile] data structure, optionally logging details to [logBuffer].
   static VoxFile parse(List<int> bytes, {StringBuffer? logBuffer}) {
-    final bool tracing = (logBuffer != null);
-    final StringBuffer log = logBuffer ?? StringBuffer();
-    final String hbarSolid = '--' * 54;
-    final String hbarDashy = '- ' * 54;
-    if (tracing) {
-      log.clear();
-      log.write('\n');
-    }
-
     final VoxReader reader = VoxReader(bytes);
+    final _VoxLogger log =
+        _VoxLogger(buffer: logBuffer, barLength: 108, tracing: (logBuffer != null));
+    log.clear();
+    log.add('\n');
 
-    // 1. verify magic header and extract version
+    // verify magic header and extract version
     final String magic = reader.readString(4);
     if (magic != 'VOX ') {
       throw FormatException('Invalid .vox file header: expected "VOX ", got "$magic"');
     }
-
     final int version = reader.readInt32();
-    log.writeln(hbarSolid);
-    log.writeln('${magic}v${version}');
-    log.writeln(hbarSolid);
+    log.barS();
+    log.line('${magic}v${version}');
+    log.barS();
 
     // 2. parse nested chunks starting with root chunk 'MAIN'
     final _VoxRawChunk mainChunk = _parseRawChunk(reader);
-    log.writeln(
+    log.line(
         '${mainChunk.id} ${mainChunk.content.length} bytes ${mainChunk.children.length} children');
     if (mainChunk.id != 'MAIN') {
       throw FormatException('Expected root chunk "MAIN", got "${mainChunk.id}"');
@@ -473,8 +502,8 @@ class VoxParser {
 
     // Traverse the parsed chunk tree
     for (final _VoxRawChunk chunk in mainChunk.children) {
-      log.writeln(hbarDashy);
-      log.writeln('${chunk.id} ${chunk.content.length} bytes ${chunk.children.length} children');
+      log.barD();
+      log.line('${chunk.id} ${chunk.content.length} bytes ${chunk.children.length} children');
       final VoxReader chunkReader = VoxReader(chunk.content);
 
       switch (chunk.id) {
@@ -485,7 +514,7 @@ class VoxParser {
           // optional chunk, specifies model count (num SIZE+XYZI pairs)
           // if absent, only one model is in the file
           final int numModels = chunkReader.readInt32();
-          log.writeln('numModels: ${numModels}');
+          log.line('numModels: ${numModels}');
           break;
 
         case 'SIZE':
@@ -493,7 +522,7 @@ class VoxParser {
           final int x = chunkReader.readInt32();
           final int y = chunkReader.readInt32();
           final int z = chunkReader.readInt32();
-          log.writeln('volume: ${x}x, ${y}y, ${z}z');
+          log.line('volume: ${x}x, ${y}y, ${z}z');
           pendingSizes.add(_VoxSize(x, y, z));
           break;
 
@@ -504,7 +533,7 @@ class VoxParser {
           }
           final _VoxSize size = pendingSizes.removeAt(0);
           final int numVoxels = chunkReader.readInt32();
-          log.writeln('voxels: ${numVoxels}');
+          log.line('voxels: ${numVoxels}');
           final List<VoxVoxel> voxels = <VoxVoxel>[];
           for (int i = 0; i < numVoxels; i++) {
             final int vx = chunkReader.readUint8();
@@ -514,15 +543,15 @@ class VoxParser {
             voxels.add(VoxVoxel(x: vx, y: vy, z: vz, colorIndex: vi));
             if (i < 12 || i >= numVoxels - 4) {
               if (i < 12 && (i > 0 && i % 4 == 0)) {
-                log.write('\n');
+                log.add('\n');
               }
               if (i == numVoxels - 4) {
-                log.write('\n··\n');
+                log.add('\n··\n');
               }
-              log.write('[${i.toString().padLeft(2, ' ')}] ${voxels.last} ');
+              log.add('[${i.toString().padLeft(2, ' ')}] ${voxels.last} ');
             }
           }
-          log.write('\n');
+          log.add('\n');
           models.add(VoxModel(
             id: models.length,
             sizeX: size.x,
@@ -534,7 +563,7 @@ class VoxParser {
 
         case 'RGBA':
           // optional chunk, defines color palette
-          log.writeln('colors: expecting 256');
+          log.line('colors: always 256');
           palette = List<VoxColor>.filled(256, const VoxColor(0, 0, 0, 0));
           for (int i = 0; i < 256; i++) {
             final int r = chunkReader.readUint8();
@@ -543,9 +572,9 @@ class VoxParser {
             final int a = chunkReader.readUint8();
             final VoxColor color = VoxColor(r, g, b, a);
             if (i > 0 && i % 4 == 0) {
-              log.write('\n');
+              log.add('\n');
             }
-            log.write('[${i.toString().padLeft(3, ' ')}] ${color} ');
+            log.add('[${i.toString().padLeft(3, ' ')}] ${color} ');
 
             // MagicaVoxel maps color [0-254] (the first 255 colors in the file)
             // to palette index [1-255]. The 256th color is mapped to index 0.
@@ -555,7 +584,7 @@ class VoxParser {
               palette[i + 1] = color;
             }
           }
-          log.write('\n');
+          log.add('\n');
           break;
 
         // extended chunk types
@@ -564,26 +593,26 @@ class VoxParser {
         case 'nTRN':
           // scene graph transform node
           final int nodeId = chunkReader.readInt32();
-          log.writeln('node id: ${nodeId}');
+          log.line('node id: ${nodeId}');
           final Map<String, String> nodeAttrs = chunkReader.readDict();
-          log.writeln('node attributes: ${nodeAttrs}');
+          log.line('node attributes: ${nodeAttrs}');
           final int childNodeId = chunkReader.readInt32();
           chunkReader.readInt32(); // consume reserved int; expected to be -1
           final int layerId = chunkReader.readInt32();
-          log.writeln('layer id: ${layerId}');
+          log.line('layer id: ${layerId}');
           final int numFrames = chunkReader.readInt32();
-          log.writeln('frames: ${numFrames}');
+          log.line('frames: ${numFrames}');
 
           final List<VoxTransformFrame> frames = <VoxTransformFrame>[];
           for (int f = 0; f < numFrames; f++) {
             final Map<String, String> frameAttrs = chunkReader.readDict();
-            log.writeln('frame[${f}]');
+            log.line('frame[${f}]');
 
             // parse rotation
             final String? rStr = frameAttrs['_r'];
             final int rVal = rStr != null ? (int.tryParse(rStr) ?? 0) : 0;
             final VoxRotation rotation = VoxRotation(rVal);
-            log.writeln('_r: ${rotation}');
+            log.line('_r: ${rotation}');
 
             // parse translation
             final String? tStr = frameAttrs['_t'];
@@ -596,10 +625,10 @@ class VoxParser {
                 tz = int.tryParse(parts[2]) ?? 0;
               }
             }
-            log.writeln('_t: ${tx}x ${ty}y ${tz}z');
+            log.line('_t: ${tx}x ${ty}y ${tz}z');
 
             final String? fStr = frameAttrs['_f'];
-            log.writeln('_f: ${fStr}');
+            log.line('_f: ${fStr}');
             final int frameIdx = fStr != null ? (int.tryParse(fStr) ?? f) : f;
 
             frames.add(VoxTransformFrame(
@@ -624,16 +653,16 @@ class VoxParser {
         case 'nGRP':
           // scene graph group node
           final int nodeId = chunkReader.readInt32();
-          log.writeln('node id: ${nodeId}');
+          log.line('node id: ${nodeId}');
           final Map<String, String> nodeAttrs = chunkReader.readDict();
-          log.writeln('node attributes: ${nodeAttrs}');
+          log.line('node attributes: ${nodeAttrs}');
           final int numChildren = chunkReader.readInt32();
-          log.writeln('children: ${numChildren}');
+          log.line('children: ${numChildren}');
           final List<int> childrenIds = <int>[];
           for (int i = 0; i < numChildren; i++) {
             childrenIds.add(chunkReader.readInt32());
           }
-          log.writeln(childrenIds);
+          log.line(childrenIds.toString());
           nodes[nodeId] = VoxGroupNode(
             id: nodeId,
             attributes: nodeAttrs,
@@ -644,20 +673,20 @@ class VoxParser {
         case 'nSHP':
           // scene graph shape node
           final int nodeId = chunkReader.readInt32();
-          log.writeln('node id: ${nodeId}');
+          log.line('node id: ${nodeId}');
           final Map<String, String> nodeAttrs = chunkReader.readDict();
-          log.writeln('node attributes: ${nodeAttrs}');
+          log.line('node attributes: ${nodeAttrs}');
           final int numModels = chunkReader.readInt32();
-          log.writeln('models: ${numModels}');
+          log.line('models: ${numModels}');
           final List<VoxShapeModelReference> modelRefs = <VoxShapeModelReference>[];
           for (int i = 0; i < numModels; i++) {
             final int modelId = chunkReader.readInt32();
-            log.writeln('model id: ${modelId}');
+            log.line('model id: ${modelId}');
             final Map<String, String> modelAttrs = chunkReader.readDict();
-            log.writeln('model attributes: ${modelAttrs}');
+            log.line('model attributes: ${modelAttrs}');
             final String? fStr = modelAttrs['_f'];
             final int frameIdx = fStr != null ? (int.tryParse(fStr) ?? 0) : 0;
-            log.writeln('_f: ${fStr}');
+            log.line('_f: ${fStr}');
 
             modelRefs.add(VoxShapeModelReference(
               modelId: modelId,
@@ -674,18 +703,18 @@ class VoxParser {
 
         case 'MATT':
           // deprecated material attributes, replaced by MATL chunk
-          log.writeln('MATT chunk is deprecated, migrate to MATL');
+          log.line('MATT chunk is deprecated, migrate to MATL');
 
           final int matId = chunkReader.readInt32();
-          log.writeln('material id: ${matId}');
+          log.line('material id: ${matId}');
 
           final List<String> matTypes = <String>['_diffuse', '_metal', '_glass', '_emit'];
           final int matTypeIndex = chunkReader.readInt32();
           final String matType = matTypes[matTypeIndex];
-          log.writeln('material type: ${matTypeIndex} (${matType})');
+          log.line('material type: ${matTypeIndex} (${matType})');
 
           final double matWeight = chunkReader.readFloat32();
-          log.writeln('material weight: ${matWeight}');
+          log.line('material weight: ${matWeight}');
 
           final Map<String, String> matProps = <String, String>{};
           matProps['_type'] = matType;
@@ -693,46 +722,46 @@ class VoxParser {
 
           final int matPropFlags = chunkReader.readInt32();
           final String flagBits = matPropFlags.toRadixString(2).padLeft(8, '0');
-          log.writeln('material property flags: ${matPropFlags} (${flagBits})');
+          log.line('material property flags: ${matPropFlags} (${flagBits})');
           bool bitSet(String bits, int i) => (bits[8 - i] == '1');
 
           if (bitSet(flagBits, 1)) {
             matProps['_plastic'] = '1';
           }
-          log.writeln('plastic: ${flagBits[8 - 1]}');
+          log.line('plastic: ${flagBits[8 - 1]}');
           if (bitSet(flagBits, 2)) {
             final double roughness = chunkReader.readFloat32();
-            log.writeln('roughness: ${roughness}');
+            log.line('roughness: ${roughness}');
             matProps['_rough'] = roughness.toString();
           }
           if (bitSet(flagBits, 3)) {
             final double specularity = chunkReader.readFloat32();
-            log.writeln('specularity: ${specularity}');
+            log.line('specularity: ${specularity}');
             matProps['_spec'] = specularity.toString();
           }
           if (bitSet(flagBits, 4)) {
             final double indexOfRefraction = chunkReader.readFloat32();
-            log.writeln('indexOfRefraction: ${indexOfRefraction}');
+            log.line('indexOfRefraction: ${indexOfRefraction}');
             matProps['_ior'] = indexOfRefraction.toString();
           }
           if (bitSet(flagBits, 5)) {
             final double attenuation = chunkReader.readFloat32();
-            log.writeln('attenuation: ${attenuation}');
+            log.line('attenuation: ${attenuation}');
             matProps['_att'] = attenuation.toString();
           }
           if (bitSet(flagBits, 6)) {
             final double flux = chunkReader.readFloat32();
-            log.writeln('flux: ${flux}');
+            log.line('flux: ${flux}');
             matProps['_flux'] = flux.toString();
           }
           if (bitSet(flagBits, 7)) {
             final double glow = chunkReader.readFloat32();
-            log.writeln('glow: ${glow}');
+            log.line('glow: ${glow}');
             matProps['_glow'] = glow.toString();
           }
           if (bitSet(flagBits, 8)) {
             final double isTotalPower = chunkReader.readFloat32();
-            log.writeln('isTotalPower: ${isTotalPower}');
+            log.line('isTotalPower: ${isTotalPower}');
             //matProps['_??'] = isTotalPower.toString();
           }
           materials[matId] = VoxMaterial(id: matId, properties: matProps);
@@ -741,18 +770,18 @@ class VoxParser {
         case 'MATL':
           // render material properties
           final int matId = chunkReader.readInt32();
-          log.writeln('material id: ${matId}');
+          log.line('material id: ${matId}');
           final Map<String, String> matProps = chunkReader.readDict();
-          log.writeln('material properties: ${matProps}');
+          log.line('material properties: ${matProps}');
           materials[matId] = VoxMaterial(id: matId, properties: matProps);
           break;
 
         case 'LAYR':
           // visibility layers (hidden layers are not rendered)
           final int layerId = chunkReader.readInt32();
-          log.writeln('material id: ${layerId}');
+          log.line('material id: ${layerId}');
           final Map<String, String> layerAttrs = chunkReader.readDict();
-          log.writeln('layer attributes: ${layerAttrs}');
+          log.line('layer attributes: ${layerAttrs}');
           chunkReader.readInt32(); // consume reserved int; expected to be -1
           layers[layerId] = VoxLayer(id: layerId, attributes: layerAttrs);
           break;
@@ -760,15 +789,15 @@ class VoxParser {
         case 'rOBJ':
           // render attributes for the model
           renderingAttributes = chunkReader.readDict();
-          log.writeln('rendering attributes: ${renderingAttributes}');
+          log.line('rendering attributes: ${renderingAttributes}');
           break;
 
         case 'rCAM':
           // render camera attributes
           final int camId = chunkReader.readInt32();
-          log.writeln('camera id: ${camId}');
+          log.line('camera id: ${camId}');
           final Map<String, String> camAttrs = chunkReader.readDict();
-          log.writeln('camera attributes: ${camAttrs}');
+          log.line('camera attributes: ${camAttrs}');
           cameras[camId] = VoxCamera(id: camId, attributes: camAttrs);
           break;
 
@@ -777,12 +806,12 @@ class VoxParser {
           // these are also retrieved via the indexMap
           // e.g.: note = paletteNotes[indexMap[voxel.colorIndex]];
           final int numNotes = chunkReader.readInt32();
-          log.writeln('notes: ${numNotes}');
+          log.line('notes: ${numNotes}');
           paletteNotes = <String>[];
           for (int i = 0; i < numNotes; i++) {
             paletteNotes.add(chunkReader.readStringPrefixed());
           }
-          log.writeln('notes: ${paletteNotes}');
+          log.line('notes: ${paletteNotes}');
           break;
 
         case 'IMAP':
@@ -793,7 +822,7 @@ class VoxParser {
           for (int i = 0; i < 256; i++) {
             indexMap.add(chunkReader.readUint8());
           }
-          log.writeln('mapping: ${indexMap}');
+          log.line('mapping: ${indexMap}');
           break;
 
         default:
@@ -801,7 +830,7 @@ class VoxParser {
           break;
       }
     }
-    log.writeln(hbarSolid);
+    log.barS();
 
     return VoxFile(
       version: version,
